@@ -29,7 +29,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\Qt
-          key: qt-6.6.0-msvc2019_64-v6
+          key: qt-6.6.0-msvc2019_64-v7
 
       - name: Install Qt 6.6.0 base
         if: steps.cache-qt.outputs.cache-hit != 'true'
@@ -39,27 +39,13 @@ jobs:
             --outputdir C:\Qt `
             --archives qtbase qtsvg
 
-      - name: Install Qt WebEngine + WebChannel modules
+      - name: Install Qt modules
         if: steps.cache-qt.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           python -m aqt install-qt windows desktop 6.6.0 win64_msvc2019_64 `
             --outputdir C:\Qt `
-            --modules qtwebengine qtwebchannel
-
-      - name: Verify Qt modules
-        shell: cmd
-        run: |
-          if not exist "C:\Qt\6.6.0\msvc2019_64\lib\Qt6WebEngineWidgets.lib" (
-            echo [ERROR] WebEngine lib missing
-            exit /b 1
-          )
-          echo [OK] WebEngine found
-          if not exist "C:\Qt\6.6.0\msvc2019_64\lib\Qt6WebChannel.lib" (
-            echo [WARN] WebChannel lib missing - continuing anyway
-          ) else (
-            echo [OK] WebChannel found
-          )
+            --modules qtwebengine qtwebchannel qtpositioning
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
@@ -89,8 +75,6 @@ jobs:
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebEngineWidgets" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebEngineCore" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebChannel" ^
-             /I "C:\Qt\6.6.0\msvc2019_64\include\QtQuick" ^
-             /I "C:\Qt\6.6.0\msvc2019_64\include\QtQml" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtSvg" ^
              /Fe:"build\RootBrowser.exe" ^
              main.cpp ^
@@ -142,6 +126,7 @@ jobs:
              --no-translations ^
              --no-system-d3d-compiler ^
              --no-opengl-sw ^
+             --no-compiler-runtime ^
              --webenginecore ^
              "build\RootBrowser.exe"
 
@@ -162,6 +147,9 @@ jobs:
           if (Test-Path "nighttheme.png") { Copy-Item "nighttheme.png" release\ }
           
           Compress-Archive -Path release\* -DestinationPath RootBrowser-Windows.zip -Force
+          
+          $size = [math]::Round((Get-Item RootBrowser-Windows.zip).Length/1MB, 2)
+          Write-Host "Package size: $size MB"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
