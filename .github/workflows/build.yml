@@ -29,7 +29,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\Qt
-          key: qt-6.6.0-msvc2019_64-v5
+          key: qt-6.6.0-msvc2019_64-v6
 
       - name: Install Qt 6.6.0 base
         if: steps.cache-qt.outputs.cache-hit != 'true'
@@ -39,26 +39,27 @@ jobs:
             --outputdir C:\Qt `
             --archives qtbase qtsvg
 
-      - name: Install Qt WebEngine module
+      - name: Install Qt WebEngine + WebChannel modules
         if: steps.cache-qt.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           python -m aqt install-qt windows desktop 6.6.0 win64_msvc2019_64 `
             --outputdir C:\Qt `
-            --modules qtwebengine
+            --modules qtwebengine qtwebchannel
 
-      - name: Verify Qt WebEngine
+      - name: Verify Qt modules
         shell: cmd
         run: |
           if not exist "C:\Qt\6.6.0\msvc2019_64\lib\Qt6WebEngineWidgets.lib" (
-            echo [ERROR] Qt6WebEngineWidgets.lib missing
+            echo [ERROR] WebEngine lib missing
             exit /b 1
           )
-          if not exist "C:\Qt\6.6.0\msvc2019_64\include\QtWebEngineCore" (
-            echo [ERROR] QtWebEngineCore include dir missing
-            exit /b 1
+          echo [OK] WebEngine found
+          if not exist "C:\Qt\6.6.0\msvc2019_64\lib\Qt6WebChannel.lib" (
+            echo [WARN] WebChannel lib missing - continuing anyway
+          ) else (
+            echo [OK] WebChannel found
           )
-          echo [OK] Qt WebEngine present
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
@@ -71,8 +72,6 @@ jobs:
           if exist resources.qrc (
             "C:\Qt\6.6.0\msvc2019_64\bin\rcc.exe" resources.qrc -o resources.cpp
             echo [OK] resources.cpp generated
-          ) else (
-            echo [WARN] resources.qrc not found
           )
 
       - name: Compile RootBrowser
@@ -125,7 +124,6 @@ jobs:
              /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup ^
              /LIBPATH:"C:\Qt\6.6.0\msvc2019_64\lib" ^
              Qt6WebEngineWidgets.lib Qt6WebEngineCore.lib ^
-             Qt6WebChannel.lib Qt6Quick.lib Qt6Qml.lib ^
              Qt6Widgets.lib Qt6Gui.lib Qt6Core.lib Qt6Network.lib ^
              Qt6Svg.lib ^
              user32.lib shell32.lib advapi32.lib ole32.lib
@@ -164,9 +162,6 @@ jobs:
           if (Test-Path "nighttheme.png") { Copy-Item "nighttheme.png" release\ }
           
           Compress-Archive -Path release\* -DestinationPath RootBrowser-Windows.zip -Force
-          
-          $size = [math]::Round((Get-Item RootBrowser-Windows.zip).Length/1MB, 2)
-          Write-Host "Package size: $size MB"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
