@@ -1,0 +1,281 @@
+name: Build RootBrowser Windows
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build Windows EXE
+    runs-on: windows-2022
+
+    steps:
+      # ════════════════════════════════════════════════════════════
+      #  1. Checkout source
+      # ════════════════════════════════════════════════════════════
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ════════════════════════════════════════════════════════════
+      #  2. Setup Python (needed for aqtinstall)
+      # ════════════════════════════════════════════════════════════
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # ════════════════════════════════════════════════════════════
+      #  3. Install aqtinstall
+      # ════════════════════════════════════════════════════════════
+      - name: Install aqtinstall
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install aqtinstall
+
+      # ════════════════════════════════════════════════════════════
+      #  4. Cache Qt (10x faster subsequent builds)
+      # ════════════════════════════════════════════════════════════
+      - name: Cache Qt
+        id: cache-qt
+        uses: actions/cache@v4
+        with:
+          path: C:\Qt
+          key: qt-6.6.0-msvc2019_64-v1
+
+      # ════════════════════════════════════════════════════════════
+      #  5. Install Qt 6.6.0 (MSVC 2019 64-bit)
+      # ════════════════════════════════════════════════════════════
+      - name: Install Qt 6.6.0
+        if: steps.cache-qt.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          python -m aqt install-qt windows desktop 6.6.0 win64_msvc2019_64 `
+            --outputdir C:\Qt `
+            --archives qtbase qtwebengine qtsvg
+
+      # ════════════════════════════════════════════════════════════
+      #  6. Setup MSVC (pre-installed on windows-2022 runner)
+      # ════════════════════════════════════════════════════════════
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # ════════════════════════════════════════════════════════════
+      #  7. Generate resources.cpp from resources.qrc
+      #     → Embeds background.png + nighttheme.png + SVGs
+      # ════════════════════════════════════════════════════════════
+      - name: Generate resources
+        shell: cmd
+        run: |
+          if exist resources.qrc (
+            echo === Generating resources.cpp ===
+            "C:\Qt\6.6.0\msvc2019_64\bin\rcc.exe" resources.qrc -o resources.cpp
+            if errorlevel 1 (
+              echo [ERROR] rcc failed
+              exit /b 1
+            )
+            dir resources.cpp
+            echo === Resources generated ===
+          ) else (
+            echo [WARN] resources.qrc not found - skipping
+          )
+
+      # ════════════════════════════════════════════════════════════
+      #  8. Compile RootBrowser
+      # ════════════════════════════════════════════════════════════
+      - name: Compile RootBrowser
+        shell: cmd
+        run: |
+          mkdir build 2>nul
+          
+          cl /nologo /std:c++17 /Zc:__cplusplus /permissive- /EHsc /O2 /MD /DNDEBUG /DNOMINMAX /DWIN32_LEAN_AND_MEAN ^
+             /I "C:\Qt\6.6.0\msvc2019_64\include" ^
+             /I "C:\Qt\6.6.0\msvc2019_64\include\QtCore" ^
+             /I "C:\Qt\6.6.0\msvc2019_64\include\QtGui" ^
+             /I "C:\Qt\6.6.0\msvc2019_64\include\QtWidgets" ^
+             /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebEngineWidgets" ^
+             /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebEngineCore" ^
+             /I "C:\Qt\6.6.0\msvc2019_64\include\QtNetwork" ^
+             /Fe:"build\RootBrowser.exe" ^
+             main.cpp ^
+             connector.cpp ^
+             viewpagesource.cpp ^
+             webadblocker.cpp ^
+             bookmarkstore.cpp ^
+             bookmarkpage.cpp ^
+             downloadmanager.cpp ^
+             downloadpage.cpp ^
+             downloadpanel.cpp ^
+             historystore.cpp ^
+             historypage.cpp ^
+             settingsstore.cpp ^
+             settingspage.cpp ^
+             findinpage.cpp ^
+             torcontroller.cpp ^
+             privatemodepage.cpp ^
+             privatehomepage.cpp ^
+             privatebrowser.cpp ^
+             httpsonly.cpp ^
+             commandpalette.cpp ^
+             fingerprintprotection.cpp ^
+             urlautocomplete.cpp ^
+             bookmarksbar.cpp ^
+             downloadnotification.cpp ^
+             downloadtoast.cpp ^
+             shortcuthelp.cpp ^
+             background.cpp ^
+             resources.cpp ^
+             /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup ^
+             /LIBPATH:"C:\Qt\6.6.0\msvc2019_64\lib" ^
+             Qt6WebEngineWidgets.lib Qt6WebEngineCore.lib ^
+             Qt6Widgets.lib Qt6Gui.lib Qt6Core.lib Qt6Network.lib ^
+             Qt6WebChannel.lib Qt6Quick.lib Qt6Qml.lib ^
+             Qt6Svg.lib Qt6SvgWidgets.lib ^
+             user32.lib shell32.lib advapi32.lib ole32.lib
+
+          if not exist "build\RootBrowser.exe" (
+            echo [ERROR] Compile failed
+            exit /b 1
+          )
+          echo === Compile success ===
+
+      # ════════════════════════════════════════════════════════════
+      #  9. Bundle Qt DLLs (with SVG support)
+      # ════════════════════════════════════════════════════════════
+      - name: Bundle Qt DLLs
+        shell: cmd
+        run: |
+          "C:\Qt\6.6.0\msvc2019_64\bin\windeployqt.exe" ^
+             --release ^
+             --no-translations ^
+             --no-system-d3d-compiler ^
+             --no-opengl-sw ^
+             --webenginecore ^
+             "build\RootBrowser.exe"
+
+      # ════════════════════════════════════════════════════════════
+      #  10. Package as ZIP with all dependencies
+      # ════════════════════════════════════════════════════════════
+      - name: Package release
+        shell: pwsh
+        run: |
+          # Create release folder
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          
+          # Copy EXE
+          Copy-Item "build\RootBrowser.exe" release\
+          
+          # Copy all DLLs
+          Get-ChildItem -Path "build\*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination release\
+          
+          # Copy all Qt folders
+          $folders = @(
+            "platforms", "styles", "imageformats", "iconengines",
+            "networkinformation", "tls", "translations", "resources",
+            "qml", "webchannel"
+          )
+          foreach ($folder in $folders) {
+            if (Test-Path "build\$folder") {
+              Copy-Item -Recurse "build\$folder" release\
+            }
+          }
+          
+          # Copy wallpapers (separately, so users can replace)
+          if (Test-Path "background.png") { Copy-Item "background.png" release\ }
+          if (Test-Path "nighttheme.png") { Copy-Item "nighttheme.png" release\ }
+          
+          # Create README for the package
+          $readme = @"
+RootBrowser v1.0 — Windows Portable
+====================================
+
+HOW TO RUN
+----------
+1. Extract this folder anywhere (e.g., C:\RootBrowser-Portable)
+2. Double-click RootBrowser.exe
+
+No installation needed — everything is portable.
+
+FEATURES
+--------
+- Cinematic home page (day/night wallpapers)
+- Tor private mode (.onion support)
+- Built-in ad blocker
+- URL autocomplete
+- Command palette
+- HTTPS-Only mode
+- Fingerprint protection
+- Download notifications
+
+KEYBOARD SHORTCUTS
+------------------
+Ctrl+T           New tab
+Ctrl+W           Close tab
+Ctrl+L           Focus address bar
+Ctrl+K           Command palette
+Ctrl+/           Keyboard shortcut help
+Ctrl+F           Find in page
+Ctrl+B           Bookmarks
+Ctrl+H           History
+Ctrl+J           Downloads
+Ctrl+,           Settings
+Ctrl+Shift+N     Tor private mode
+Ctrl+Shift+B     Toggle bookmarks bar
+F11              Full screen
+
+SYSTEM REQUIREMENTS
+-------------------
+- Windows 10/11 (64-bit)
+- 200 MB free space
+
+TECHNICAL
+---------
+- Built with Qt 6.6 + Chromium (QtWebEngine)
+- C++17
+- Moc-free architecture
+
+LICENSE
+-------
+MIT License — See LICENSE file.
+
+Built from scratch by @IndianInstituteOfHacking
+"@
+          $readme | Out-File -FilePath "release\README.txt" -Encoding UTF8
+          
+          # Zip everything
+          Compress-Archive -Path release\* -DestinationPath RootBrowser-Windows.zip -Force
+          
+          # Show size
+          $size = [math]::Round((Get-Item RootBrowser-Windows.zip).Length/1MB, 2)
+          Write-Host ""
+          Write-Host "=== Package ready: $size MB ===" -ForegroundColor Green
+          Write-Host ""
+
+      # ════════════════════════════════════════════════════════════
+      #  11. Upload artifact
+      # ════════════════════════════════════════════════════════════
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RootBrowser-Windows
+          path: RootBrowser-Windows.zip
+          retention-days: 90
+
+      # ════════════════════════════════════════════════════════════
+      #  12. Create GitHub Release (if tag pushed)
+      # ════════════════════════════════════════════════════════════
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: RootBrowser-Windows.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
