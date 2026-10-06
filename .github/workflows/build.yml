@@ -24,25 +24,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install aqtinstall
 
-      - name: Cache Qt
-        id: cache-qt
-        uses: actions/cache@v4
-        with:
-          path: C:\Qt
-          key: qt-6.6.0-msvc2019_64-v7
-
-      - name: Install Qt 6.6.0 base
-        if: steps.cache-qt.outputs.cache-hit != 'true'
+      - name: Install Qt 6.6.0 (full)
         shell: pwsh
         run: |
           python -m aqt install-qt windows desktop 6.6.0 win64_msvc2019_64 `
             --outputdir C:\Qt `
             --archives qtbase qtsvg
-
-      - name: Install Qt modules
-        if: steps.cache-qt.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: |
           python -m aqt install-qt windows desktop 6.6.0 win64_msvc2019_64 `
             --outputdir C:\Qt `
             --modules qtwebengine qtwebchannel qtpositioning
@@ -57,14 +44,12 @@ jobs:
         run: |
           if exist resources.qrc (
             "C:\Qt\6.6.0\msvc2019_64\bin\rcc.exe" resources.qrc -o resources.cpp
-            echo [OK] resources.cpp generated
           )
 
-      - name: Compile RootBrowser
+      - name: Compile
         shell: cmd
         run: |
           mkdir build 2>nul
-          
           cl /nologo /std:c++17 /Zc:__cplusplus /permissive- /EHsc /O2 /MD /DNDEBUG ^
              /DNOMINMAX /DWIN32_LEAN_AND_MEAN /bigobj /utf-8 /Zm500 ^
              /I "C:\Qt\6.6.0\msvc2019_64\include" ^
@@ -77,34 +62,15 @@ jobs:
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebChannel" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtSvg" ^
              /Fe:"build\RootBrowser.exe" ^
-             main.cpp ^
-             connector.cpp ^
-             viewpagesource.cpp ^
-             webadblocker.cpp ^
-             bookmarkstore.cpp ^
-             bookmarkpage.cpp ^
-             downloadmanager.cpp ^
-             downloadpage.cpp ^
-             downloadpanel.cpp ^
-             historystore.cpp ^
-             historypage.cpp ^
-             settingsstore.cpp ^
-             settingspage.cpp ^
-             findinpage.cpp ^
-             torcontroller.cpp ^
-             privatemodepage.cpp ^
-             privatehomepage.cpp ^
-             privatebrowser.cpp ^
-             httpsonly.cpp ^
-             commandpalette.cpp ^
-             fingerprintprotection.cpp ^
-             urlautocomplete.cpp ^
-             bookmarksbar.cpp ^
-             downloadnotification.cpp ^
-             downloadtoast.cpp ^
-             shortcuthelp.cpp ^
-             background.cpp ^
-             resources.cpp ^
+             main.cpp connector.cpp viewpagesource.cpp webadblocker.cpp ^
+             bookmarkstore.cpp bookmarkpage.cpp downloadmanager.cpp ^
+             downloadpage.cpp downloadpanel.cpp historystore.cpp ^
+             historypage.cpp settingsstore.cpp settingspage.cpp ^
+             findinpage.cpp torcontroller.cpp privatemodepage.cpp ^
+             privatehomepage.cpp privatebrowser.cpp httpsonly.cpp ^
+             commandpalette.cpp fingerprintprotection.cpp urlautocomplete.cpp ^
+             bookmarksbar.cpp downloadnotification.cpp downloadtoast.cpp ^
+             shortcuthelp.cpp background.cpp resources.cpp ^
              /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup ^
              /LIBPATH:"C:\Qt\6.6.0\msvc2019_64\lib" ^
              Qt6WebEngineWidgets.lib Qt6WebEngineCore.lib ^
@@ -112,57 +78,59 @@ jobs:
              Qt6Svg.lib ^
              user32.lib shell32.lib advapi32.lib ole32.lib
 
-          if not exist "build\RootBrowser.exe" (
-            echo [ERROR] Compile failed
-            exit /b 1
-          )
-          echo [OK] RootBrowser.exe built
-
-      - name: Bundle Qt DLLs
+      - name: Bundle ALL Qt DLLs
         shell: cmd
         run: |
           "C:\Qt\6.6.0\msvc2019_64\bin\windeployqt.exe" ^
-             --release ^
-             --no-translations ^
-             --no-system-d3d-compiler ^
-             --no-opengl-sw ^
-             --no-compiler-runtime ^
+             --release --no-translations --no-system-d3d-compiler ^
+             --no-opengl-sw --no-compiler-runtime ^
              --webenginecore ^
              "build\RootBrowser.exe"
+          
+          echo === Copy remaining DLLs ===
+          for %D in (Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll Qt6Network.dll Qt6Svg.dll Qt6WebEngineCore.dll Qt6WebEngineWidgets.dll Qt6WebChannel.dll Qt6Quick.dll Qt6Qml.dll Qt6Positioning.dll Qt6WebEngineQuick.dll Qt6WebEngineQuickDelegatesQml.dll) do (
+            if not exist "build\%D" (
+              if exist "C:\Qt\6.6.0\msvc2019_64\bin\%D" (
+                copy "C:\Qt\6.6.0\msvc2019_64\bin\%D" "build\" >nul
+              )
+            )
+          )
 
-      - name: Package release
+      - name: Create portable folder
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          Copy-Item "build\RootBrowser.exe" release\
-          Get-ChildItem -Path "build\*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination release\
           
-          foreach ($folder in @("platforms", "styles", "imageformats", "iconengines", "networkinformation", "tls", "translations", "resources", "qml", "webchannel")) {
-            if (Test-Path "build\$folder") {
-              Copy-Item -Recurse "build\$folder" release\
-            }
+          # Copy EXE
+          Copy-Item "build\RootBrowser.exe" release\
+          
+          # Copy ALL DLLs from build folder
+          Get-ChildItem "build\*.dll" | Copy-Item -Destination release\
+          
+          # Copy ALL folders
+          foreach ($f in @("platforms","styles","imageformats","iconengines","networkinformation","tls","translations","resources","qml","webchannel")) {
+            if (Test-Path "build\$f") { Copy-Item -Recurse "build\$f" release\ }
           }
           
+          # Copy wallpapers
           if (Test-Path "background.png") { Copy-Item "background.png" release\ }
           if (Test-Path "nighttheme.png") { Copy-Item "nighttheme.png" release\ }
           
+          # Verify Qt6Gui.dll specifically
+          if (-not (Test-Path "release\Qt6Gui.dll")) {
+            Write-Host "ERROR: Qt6Gui.dll missing!"
+            exit 1
+          }
+          
+          # Zip
           Compress-Archive -Path release\* -DestinationPath RootBrowser-Windows.zip -Force
           
+          # Show size
           $size = [math]::Round((Get-Item RootBrowser-Windows.zip).Length/1MB, 2)
           Write-Host "Package size: $size MB"
 
-      - name: Upload artifact
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: RootBrowser-Windows
           path: RootBrowser-Windows.zip
-          retention-days: 90
-
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: RootBrowser-Windows.zip
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
