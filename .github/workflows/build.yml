@@ -4,8 +4,6 @@ on:
   push:
     branches: [main, master]
     tags: ['v*']
-  pull_request:
-    branches: [main, master]
   workflow_dispatch:
 
 jobs:
@@ -32,7 +30,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\Qt
-          key: qt-6.6.0-msvc2019_64-v1
+          key: qt-6.6.0-msvc2019_64-v2
 
       - name: Install Qt 6.6.0
         if: steps.cache-qt.outputs.cache-hit != 'true'
@@ -47,12 +45,23 @@ jobs:
         with:
           arch: x64
 
+      - name: Verify files
+        shell: cmd
+        run: |
+          echo === Files in repo ===
+          dir *.cpp
+          echo ===
+          dir *.h
+          echo ===
+          if exist webadblocker.h (echo webadblocker.h OK) else (echo webadblocker.h MISSING)
+          if exist settingsstore.cpp (echo settingsstore.cpp OK) else (echo settingsstore.cpp MISSING)
+          if exist urlautocomplete.cpp (echo urlautocomplete.cpp OK) else (echo urlautocomplete.cpp MISSING)
+
       - name: Generate resources
         shell: cmd
         run: |
           if exist resources.qrc (
             "C:\Qt\6.6.0\msvc2019_64\bin\rcc.exe" resources.qrc -o resources.cpp
-            dir resources.cpp
           ) else (
             echo [WARN] resources.qrc not found
           )
@@ -61,14 +70,22 @@ jobs:
         shell: cmd
         run: |
           mkdir build 2>nul
-          cl /nologo /std:c++17 /Zc:__cplusplus /permissive- /EHsc /O2 /MD /DNDEBUG /DNOMINMAX /DWIN32_LEAN_AND_MEAN ^
+          
+          cl /nologo /std:c++17 /Zc:__cplusplus /permissive- /EHsc /O2 /MD /DNDEBUG /DNOMINMAX /DWIN32_LEAN_AND_MEAN /bigobj /utf-8 ^
              /I "C:\Qt\6.6.0\msvc2019_64\include" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtCore" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtGui" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtWidgets" ^
+             /I "C:\Qt\6.6.0\msvc2019_64\include\QtNetwork" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebEngineWidgets" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebEngineCore" ^
-             /I "C:\Qt\6.6.0\msvc2019_64\include\QtNetwork" ^
+             /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebEngineWidgets\QtWebEngineWidgets" ^
+             /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebEngineCore\QtWebEngineCore" ^
+             /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebChannel" ^
+             /I "C:\Qt\6.6.0\msvc2019_64\include\QtQuick" ^
+             /I "C:\Qt\6.6.0\msvc2019_64\include\QtQml" ^
+             /I "C:\Qt\6.6.0\msvc2019_64\include\QtSvg" ^
+             /I "C:\Qt\6.6.0\msvc2019_64\include\QtPositioning" ^
              /Fe:"build\RootBrowser.exe" ^
              main.cpp ^
              connector.cpp ^
@@ -101,8 +118,8 @@ jobs:
              /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup ^
              /LIBPATH:"C:\Qt\6.6.0\msvc2019_64\lib" ^
              Qt6WebEngineWidgets.lib Qt6WebEngineCore.lib ^
-             Qt6Widgets.lib Qt6Gui.lib Qt6Core.lib Qt6Network.lib ^
              Qt6WebChannel.lib Qt6Quick.lib Qt6Qml.lib ^
+             Qt6Widgets.lib Qt6Gui.lib Qt6Core.lib Qt6Network.lib ^
              Qt6Svg.lib Qt6SvgWidgets.lib ^
              user32.lib shell32.lib advapi32.lib ole32.lib
 
@@ -130,10 +147,7 @@ jobs:
           }
           if (Test-Path "background.png") { Copy-Item "background.png" release\ }
           if (Test-Path "nighttheme.png") { Copy-Item "nighttheme.png" release\ }
-          $readme = "RootBrowser v1.0 - Windows Portable`n=================================`n`nHOW TO RUN`n----------`n1. Extract folder`n2. Double-click RootBrowser.exe`n`nSHORTCUTS`n---------`nCtrl+T  New tab`nCtrl+W  Close tab`nCtrl+L  Address bar`nCtrl+K  Command palette`nCtrl+F  Find in page`nCtrl+H  History`nCtrl+J  Downloads`nCtrl+,  Settings`nCtrl+Shift+N  Tor mode`nF11  Fullscreen`n`nLICENSE: MIT"
-          $readme | Out-File -FilePath "release\README.txt" -Encoding UTF8
           Compress-Archive -Path release\* -DestinationPath RootBrowser-Windows.zip -Force
-          Get-Item RootBrowser-Windows.zip | Format-List Name, @{Name="SizeMB";Expression={[math]::Round($_.Length/1MB,2)}}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
