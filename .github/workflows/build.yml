@@ -8,7 +8,6 @@ on:
 
 jobs:
   build-windows:
-    name: Build Windows EXE
     runs-on: windows-2022
 
     steps:
@@ -30,38 +29,48 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\Qt
-          key: qt-6.6.0-msvc2019_64-v2
+          key: qt-6.6.0-msvc2019_64-v5
 
-      - name: Install Qt 6.6.0
+      - name: Install Qt 6.6.0 base
         if: steps.cache-qt.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           python -m aqt install-qt windows desktop 6.6.0 win64_msvc2019_64 `
             --outputdir C:\Qt `
-            --archives qtbase qtwebengine qtsvg
+            --archives qtbase qtsvg
+
+      - name: Install Qt WebEngine module
+        if: steps.cache-qt.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          python -m aqt install-qt windows desktop 6.6.0 win64_msvc2019_64 `
+            --outputdir C:\Qt `
+            --modules qtwebengine
+
+      - name: Verify Qt WebEngine
+        shell: cmd
+        run: |
+          if not exist "C:\Qt\6.6.0\msvc2019_64\lib\Qt6WebEngineWidgets.lib" (
+            echo [ERROR] Qt6WebEngineWidgets.lib missing
+            exit /b 1
+          )
+          if not exist "C:\Qt\6.6.0\msvc2019_64\include\QtWebEngineCore" (
+            echo [ERROR] QtWebEngineCore include dir missing
+            exit /b 1
+          )
+          echo [OK] Qt WebEngine present
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: Verify files
-        shell: cmd
-        run: |
-          echo === Files in repo ===
-          dir *.cpp
-          echo ===
-          dir *.h
-          echo ===
-          if exist webadblocker.h (echo webadblocker.h OK) else (echo webadblocker.h MISSING)
-          if exist settingsstore.cpp (echo settingsstore.cpp OK) else (echo settingsstore.cpp MISSING)
-          if exist urlautocomplete.cpp (echo urlautocomplete.cpp OK) else (echo urlautocomplete.cpp MISSING)
-
       - name: Generate resources
         shell: cmd
         run: |
           if exist resources.qrc (
             "C:\Qt\6.6.0\msvc2019_64\bin\rcc.exe" resources.qrc -o resources.cpp
+            echo [OK] resources.cpp generated
           ) else (
             echo [WARN] resources.qrc not found
           )
@@ -71,7 +80,8 @@ jobs:
         run: |
           mkdir build 2>nul
           
-          cl /nologo /std:c++17 /Zc:__cplusplus /permissive- /EHsc /O2 /MD /DNDEBUG /DNOMINMAX /DWIN32_LEAN_AND_MEAN /bigobj /utf-8 ^
+          cl /nologo /std:c++17 /Zc:__cplusplus /permissive- /EHsc /O2 /MD /DNDEBUG ^
+             /DNOMINMAX /DWIN32_LEAN_AND_MEAN /bigobj /utf-8 /Zm500 ^
              /I "C:\Qt\6.6.0\msvc2019_64\include" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtCore" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtGui" ^
@@ -79,13 +89,10 @@ jobs:
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtNetwork" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebEngineWidgets" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebEngineCore" ^
-             /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebEngineWidgets\QtWebEngineWidgets" ^
-             /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebEngineCore\QtWebEngineCore" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtWebChannel" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtQuick" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtQml" ^
              /I "C:\Qt\6.6.0\msvc2019_64\include\QtSvg" ^
-             /I "C:\Qt\6.6.0\msvc2019_64\include\QtPositioning" ^
              /Fe:"build\RootBrowser.exe" ^
              main.cpp ^
              connector.cpp ^
@@ -120,8 +127,14 @@ jobs:
              Qt6WebEngineWidgets.lib Qt6WebEngineCore.lib ^
              Qt6WebChannel.lib Qt6Quick.lib Qt6Qml.lib ^
              Qt6Widgets.lib Qt6Gui.lib Qt6Core.lib Qt6Network.lib ^
-             Qt6Svg.lib Qt6SvgWidgets.lib ^
+             Qt6Svg.lib ^
              user32.lib shell32.lib advapi32.lib ole32.lib
+
+          if not exist "build\RootBrowser.exe" (
+            echo [ERROR] Compile failed
+            exit /b 1
+          )
+          echo [OK] RootBrowser.exe built
 
       - name: Bundle Qt DLLs
         shell: cmd
@@ -140,14 +153,20 @@ jobs:
           New-Item -ItemType Directory -Force -Path release | Out-Null
           Copy-Item "build\RootBrowser.exe" release\
           Get-ChildItem -Path "build\*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination release\
+          
           foreach ($folder in @("platforms", "styles", "imageformats", "iconengines", "networkinformation", "tls", "translations", "resources", "qml", "webchannel")) {
             if (Test-Path "build\$folder") {
               Copy-Item -Recurse "build\$folder" release\
             }
           }
+          
           if (Test-Path "background.png") { Copy-Item "background.png" release\ }
           if (Test-Path "nighttheme.png") { Copy-Item "nighttheme.png" release\ }
+          
           Compress-Archive -Path release\* -DestinationPath RootBrowser-Windows.zip -Force
+          
+          $size = [math]::Round((Get-Item RootBrowser-Windows.zip).Length/1MB, 2)
+          Write-Host "Package size: $size MB"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
